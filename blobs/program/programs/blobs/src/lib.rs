@@ -18,6 +18,10 @@ pub mod blobs {
         init_player::init_player(ctx)
     }
 
+    pub fn spawn_blobs(ctx: Context<SpawnBlob>, _level_seed: String, x: u8, y: u8) -> Result<()> {
+        spawn_blob::spawn_blob(ctx, x, y)
+    }
+
     // This function lets the player chop a tree and get 1 wood. The session_auth_or macro
     // lets the player either use their session token or their main wallet. (The counter is only
     // there so that the player can do multiple transactions in the same block. Without it multiple transactions

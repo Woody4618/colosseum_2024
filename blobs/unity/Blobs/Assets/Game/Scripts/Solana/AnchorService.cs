@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Tasks;
 using Cysharp.Threading.Tasks;
@@ -57,11 +58,11 @@ public class AnchorService : MonoBehaviour
     private string sessionKeyPassword = "inGame"; // Would be better to generate and save in playerprefs
     private string levelSeed = "level_2";
     private ushort transactionCounter = 0;
-    
+
     // Only used to show transaction speed. Feel free to remove
     private Dictionary<ushort, Stopwatch> stopWatches = new ();
     private long lastTransactionTimeInMs;
-    
+
     private void Awake()
     {
         if (Instance != null && Instance != this)
@@ -84,9 +85,9 @@ public class AnchorService : MonoBehaviour
     private async void OnLogin(Account account)
     {
         Debug.Log("Logged in with pubkey: " + account.PublicKey);
-        
+
         await RequestAirdropIfSolValueIsLow();
-        
+
         sessionWallet = await SessionWallet.GetSessionWallet(AnchorProgramIdPubKey, sessionKeyPassword);
         await UpdateSessionValid();
 
@@ -192,7 +193,8 @@ public class AnchorService : MonoBehaviour
 
         if (gameData != null)
         {
-            await anchorClient.SubscribeGameDataAsync(GameDataPDA, (state, value, gameData) =>
+          //Debug.Log("There are " + gameData.ParsedResult.ActiveBlobs.Length + " blobs");
+          await anchorClient.SubscribeGameDataAsync(GameDataPDA, (state, value, gameData) =>
             {
                 OnRecievedGameDataUpdate(gameData);
             }, Commitment.Processed);
@@ -224,7 +226,7 @@ public class AnchorService : MonoBehaviour
         var initTx = BlobsProgram.InitPlayer(accounts, levelSeed, AnchorProgramIdPubKey);
         tx.Add(initTx);
 
-        if (true)
+        if (useSession)
         {
             if (!(await IsSessionTokenInitialized()))
             {
@@ -252,7 +254,7 @@ public class AnchorService : MonoBehaviour
     {
         (isBlocking ? ref blockingTransactionsInProgress : ref nonBlockingTransactionsInProgress)++;
         LastError = String.Empty;
-        
+
         Debug.Log("Sending and confirming transaction: " + label);
         RequestResult<string> res;
         try
@@ -280,7 +282,7 @@ public class AnchorService : MonoBehaviour
             if (res.RawRpcResponse.Contains("InsufficientFundsForRent"))
             {
                 Debug.Log("Trigger session top up (Not implemented)");
-                // TODO: This can probably happen when the session key runs out of funds. Easiest is to just create a 
+                // TODO: This can probably happen when the session key runs out of funds. Easiest is to just create a
                 // new session in this popup. Other option would be to implement a topup popup
                 ServiceFactory.Resolve<UiService>().OpenPopup(UiService.ScreenType.SessionPopup, new SessionPopupUiData());
             }
@@ -306,14 +308,14 @@ public class AnchorService : MonoBehaviour
 
     public async void ChopTree(bool useSession, Action onSuccess)
     {
-        if (!Instance.IsSessionValid())
+        if (!Instance.IsSessionValid() && useSession)
         {
             await Instance.UpdateSessionValid();
             ServiceFactory.Resolve<UiService>().OpenPopup(UiService.ScreenType.SessionPopup, new SessionPopupUiData());
             return;
         }
 
-        // only for time tracking feel free to remove 
+        // only for time tracking feel free to remove
         var stopWatch = new Stopwatch();
         stopWatch.Start();
         stopWatches[++transactionCounter] = stopWatch;

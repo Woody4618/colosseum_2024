@@ -47,3 +47,19 @@ If a player want to extract the sol from a blob back to his wallet he can do so 
 
 Either one big grid account or multiple PDAs for each player. 
 TODO: Discuss the pros and cons of each.
+
+TODO Game preset: 
+- Add use session to player data init
+- Add check for session to session popup
+- Rename test ts file to how the project is called or smth default 
+
+TODO Client: 
+- Add Spawn blobs call to unity 
+- Draw blobs in a grid in unity 
+
+
+TODO Program: 
+- Random blobs position 
+- Blob position check (increase blob level on duplicate)
+
+

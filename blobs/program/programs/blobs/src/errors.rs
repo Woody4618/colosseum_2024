@@ -6,4 +6,6 @@ pub enum GameErrorCode {
     NotEnoughEnergy,
     #[msg("Wrong Authority")]
     WrongAuthority,
+    #[msg("Already attacking")]
+    AlreadyAttacking,
 }

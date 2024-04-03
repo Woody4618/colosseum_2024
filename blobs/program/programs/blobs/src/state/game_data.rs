@@ -2,9 +2,13 @@ use anchor_lang::prelude::*;
 
 use crate::constants::MAX_WOOD_PER_TREE;
 
+use super::blob_data::BlobData;
+
 #[account]
 pub struct GameData {
     pub total_wood_collected: u64,
+    pub active_blobs: Vec<Pubkey>,
+    // TODO: Add game config like color fill up
 }
 
 impl GameData {
@@ -24,6 +28,15 @@ impl GameData {
             }
         };
 
+        Ok(())
+    }
+
+    pub fn on_new_blob_spanwed(&mut self, new_blob: BlobData) -> Result<()> {
+        Ok(())
+    }
+
+    pub fn on_new_blob_spanwed_pubkey(&mut self, new_blob: Pubkey) -> Result<()> {
+        self.active_blobs.push(new_blob);
         Ok(())
     }
 }

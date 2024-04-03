@@ -1,10 +1,10 @@
 pub use crate::errors::GameErrorCode;
 use crate::state::player_data::PlayerData;
-use crate::{constants::MAX_ENERGY, GameData};
+use crate::{constants::MAX_COLOR, GameData};
 use anchor_lang::prelude::*;
 
 pub fn init_player(ctx: Context<InitPlayer>) -> Result<()> {
-    ctx.accounts.player.energy = MAX_ENERGY;
+    ctx.accounts.player.energy = MAX_COLOR;
     ctx.accounts.player.last_login = Clock::get()?.unix_timestamp;
     ctx.accounts.player.authority = ctx.accounts.signer.key();
     Ok(())

@@ -21,12 +21,66 @@ namespace Blobs
 {
     namespace Accounts
     {
+        public partial class BlobData
+        {
+            public static ulong ACCOUNT_DISCRIMINATOR => 17324442149211179174UL;
+            public static ReadOnlySpan<byte> ACCOUNT_DISCRIMINATOR_BYTES => new byte[]{166, 136, 137, 139, 88, 200, 108, 240};
+            public static string ACCOUNT_DISCRIMINATOR_B58 => "Uram9xpMZqZ";
+            public PublicKey Authority { get; set; }
+
+            public byte X { get; set; }
+
+            public byte Y { get; set; }
+
+            public byte Level { get; set; }
+
+            public ulong Color { get; set; }
+
+            public ulong ColorMax { get; set; }
+
+            public long LastLogin { get; set; }
+
+            public ushort LastId { get; set; }
+
+            public static BlobData Deserialize(ReadOnlySpan<byte> _data)
+            {
+                int offset = 0;
+                ulong accountHashValue = _data.GetU64(offset);
+                offset += 8;
+                if (accountHashValue != ACCOUNT_DISCRIMINATOR)
+                {
+                    return null;
+                }
+
+                BlobData result = new BlobData();
+                result.Authority = _data.GetPubKey(offset);
+                offset += 32;
+                result.X = _data.GetU8(offset);
+                offset += 1;
+                result.Y = _data.GetU8(offset);
+                offset += 1;
+                result.Level = _data.GetU8(offset);
+                offset += 1;
+                result.Color = _data.GetU64(offset);
+                offset += 8;
+                result.ColorMax = _data.GetU64(offset);
+                offset += 8;
+                result.LastLogin = _data.GetS64(offset);
+                offset += 8;
+                result.LastId = _data.GetU16(offset);
+                offset += 2;
+                return result;
+            }
+        }
+
         public partial class GameData
         {
             public static ulong ACCOUNT_DISCRIMINATOR => 13758009850765924589UL;
             public static ReadOnlySpan<byte> ACCOUNT_DISCRIMINATOR_BYTES => new byte[]{237, 88, 58, 243, 16, 69, 238, 190};
             public static string ACCOUNT_DISCRIMINATOR_B58 => "ghYLwVtPH73";
             public ulong TotalWoodCollected { get; set; }
+
+            public PublicKey[] ActiveBlobs { get; set; }
 
             public static GameData Deserialize(ReadOnlySpan<byte> _data)
             {
@@ -41,6 +95,15 @@ namespace Blobs
                 GameData result = new GameData();
                 result.TotalWoodCollected = _data.GetU64(offset);
                 offset += 8;
+                int resultActiveBlobsLength = (int)_data.GetU32(offset);
+                offset += 4;
+                result.ActiveBlobs = new PublicKey[resultActiveBlobsLength];
+                for (uint resultActiveBlobsIdx = 0; resultActiveBlobsIdx < resultActiveBlobsLength; resultActiveBlobsIdx++)
+                {
+                    result.ActiveBlobs[resultActiveBlobsIdx] = _data.GetPubKey(offset);
+                    offset += 32;
+                }
+
                 return result;
             }
         }
@@ -113,6 +176,17 @@ namespace Blobs
         {
         }
 
+        public async Task<Solana.Unity.Programs.Models.ProgramAccountsResultWrapper<List<BlobData>>> GetBlobDatasAsync(string programAddress, Commitment commitment = Commitment.Finalized)
+        {
+            var list = new List<Solana.Unity.Rpc.Models.MemCmp>{new Solana.Unity.Rpc.Models.MemCmp{Bytes = BlobData.ACCOUNT_DISCRIMINATOR_B58, Offset = 0}};
+            var res = await RpcClient.GetProgramAccountsAsync(programAddress, commitment, memCmpList: list);
+            if (!res.WasSuccessful || !(res.Result?.Count > 0))
+                return new Solana.Unity.Programs.Models.ProgramAccountsResultWrapper<List<BlobData>>(res);
+            List<BlobData> resultingAccounts = new List<BlobData>(res.Result.Count);
+            resultingAccounts.AddRange(res.Result.Select(result => BlobData.Deserialize(Convert.FromBase64String(result.Account.Data[0]))));
+            return new Solana.Unity.Programs.Models.ProgramAccountsResultWrapper<List<BlobData>>(res, resultingAccounts);
+        }
+
         public async Task<Solana.Unity.Programs.Models.ProgramAccountsResultWrapper<List<GameData>>> GetGameDatasAsync(string programAddress, Commitment commitment = Commitment.Finalized)
         {
             var list = new List<Solana.Unity.Rpc.Models.MemCmp>{new Solana.Unity.Rpc.Models.MemCmp{Bytes = GameData.ACCOUNT_DISCRIMINATOR_B58, Offset = 0}};
@@ -135,6 +209,15 @@ namespace Blobs
             return new Solana.Unity.Programs.Models.ProgramAccountsResultWrapper<List<PlayerData>>(res, resultingAccounts);
         }
 
+        public async Task<Solana.Unity.Programs.Models.AccountResultWrapper<BlobData>> GetBlobDataAsync(string accountAddress, Commitment commitment = Commitment.Finalized)
+        {
+            var res = await RpcClient.GetAccountInfoAsync(accountAddress, commitment);
+            if (!res.WasSuccessful)
+                return new Solana.Unity.Programs.Models.AccountResultWrapper<BlobData>(res);
+            var resultingAccount = BlobData.Deserialize(Convert.FromBase64String(res.Result.Value.Data[0]));
+            return new Solana.Unity.Programs.Models.AccountResultWrapper<BlobData>(res, resultingAccount);
+        }
+
         public async Task<Solana.Unity.Programs.Models.AccountResultWrapper<GameData>> GetGameDataAsync(string accountAddress, Commitment commitment = Commitment.Finalized)
         {
             var res = await RpcClient.GetAccountInfoAsync(accountAddress, commitment);
@@ -151,6 +234,18 @@ namespace Blobs
                 return new Solana.Unity.Programs.Models.AccountResultWrapper<PlayerData>(res);
             var resultingAccount = PlayerData.Deserialize(Convert.FromBase64String(res.Result.Value.Data[0]));
             return new Solana.Unity.Programs.Models.AccountResultWrapper<PlayerData>(res, resultingAccount);
+        }
+
+        public async Task<SubscriptionState> SubscribeBlobDataAsync(string accountAddress, Action<SubscriptionState, Solana.Unity.Rpc.Messages.ResponseValue<Solana.Unity.Rpc.Models.AccountInfo>, BlobData> callback, Commitment commitment = Commitment.Finalized)
+        {
+            SubscriptionState res = await StreamingRpcClient.SubscribeAccountInfoAsync(accountAddress, (s, e) =>
+            {
+                BlobData parsingResult = null;
+                if (e.Value?.Data?.Count > 0)
+                    parsingResult = BlobData.Deserialize(Convert.FromBase64String(e.Value.Data[0]));
+                callback(s, e, parsingResult);
+            }, commitment);
+            return res;
         }
 
         public async Task<SubscriptionState> SubscribeGameDataAsync(string accountAddress, Action<SubscriptionState, Solana.Unity.Rpc.Messages.ResponseValue<Solana.Unity.Rpc.Models.AccountInfo>, GameData> callback, Commitment commitment = Commitment.Finalized)
@@ -183,15 +278,15 @@ namespace Blobs
             return await SignAndSendTransaction(instr, feePayer, signingCallback);
         }
 
-        public async Task<RequestResult<string>> SendChopTreeAsync(ChopTreeAccounts accounts, string levelSeed, ushort counter, PublicKey feePayer, Func<byte[], PublicKey, byte[]> signingCallback, PublicKey programId)
+        public async Task<RequestResult<string>> SendSpawnBlobsAsync(SpawnBlobsAccounts accounts, string levelSeed, byte x, byte y, PublicKey feePayer, Func<byte[], PublicKey, byte[]> signingCallback, PublicKey programId)
         {
-            Solana.Unity.Rpc.Models.TransactionInstruction instr = Program.BlobsProgram.ChopTree(accounts, levelSeed, counter, programId);
+            Solana.Unity.Rpc.Models.TransactionInstruction instr = Program.BlobsProgram.SpawnBlobs(accounts, levelSeed, x, y, programId);
             return await SignAndSendTransaction(instr, feePayer, signingCallback);
         }
 
-        public async Task<RequestResult<string>> SendSuperChopTreeAsync(SuperChopTreeAccounts accounts, string levelSeed, ushort counter, PublicKey feePayer, Func<byte[], PublicKey, byte[]> signingCallback, PublicKey programId)
+        public async Task<RequestResult<string>> SendChopTreeAsync(ChopTreeAccounts accounts, string levelSeed, ushort counter, PublicKey feePayer, Func<byte[], PublicKey, byte[]> signingCallback, PublicKey programId)
         {
-            Solana.Unity.Rpc.Models.TransactionInstruction instr = Program.BlobsProgram.SuperChopTree(accounts, levelSeed, counter, programId);
+            Solana.Unity.Rpc.Models.TransactionInstruction instr = Program.BlobsProgram.ChopTree(accounts, levelSeed, counter, programId);
             return await SignAndSendTransaction(instr, feePayer, signingCallback);
         }
 
@@ -214,11 +309,11 @@ namespace Blobs
             public PublicKey SystemProgram { get; set; }
         }
 
-        public class ChopTreeAccounts
+        public class SpawnBlobsAccounts
         {
             public PublicKey SessionToken { get; set; }
 
-            public PublicKey Player { get; set; }
+            public PublicKey Blob { get; set; }
 
             public PublicKey GameData { get; set; }
 
@@ -227,7 +322,7 @@ namespace Blobs
             public PublicKey SystemProgram { get; set; }
         }
 
-        public class SuperChopTreeAccounts
+        public class ChopTreeAccounts
         {
             public PublicKey SessionToken { get; set; }
 
@@ -256,6 +351,24 @@ namespace Blobs
                 return new Solana.Unity.Rpc.Models.TransactionInstruction{Keys = keys, ProgramId = programId.KeyBytes, Data = resultData};
             }
 
+            public static Solana.Unity.Rpc.Models.TransactionInstruction SpawnBlobs(SpawnBlobsAccounts accounts, string levelSeed, byte x, byte y, PublicKey programId)
+            {
+                List<Solana.Unity.Rpc.Models.AccountMeta> keys = new()
+                {Solana.Unity.Rpc.Models.AccountMeta.ReadOnly(accounts.SessionToken == null ? programId : accounts.SessionToken, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.Blob, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.GameData, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.Signer, true), Solana.Unity.Rpc.Models.AccountMeta.ReadOnly(accounts.SystemProgram, false)};
+                byte[] _data = new byte[1200];
+                int offset = 0;
+                _data.WriteU64(18180153710071007331UL, offset);
+                offset += 8;
+                offset += _data.WriteBorshString(levelSeed, offset);
+                _data.WriteU8(x, offset);
+                offset += 1;
+                _data.WriteU8(y, offset);
+                offset += 1;
+                byte[] resultData = new byte[offset];
+                Array.Copy(_data, resultData, offset);
+                return new Solana.Unity.Rpc.Models.TransactionInstruction{Keys = keys, ProgramId = programId.KeyBytes, Data = resultData};
+            }
+
             public static Solana.Unity.Rpc.Models.TransactionInstruction ChopTree(ChopTreeAccounts accounts, string levelSeed, ushort counter, PublicKey programId)
             {
                 List<Solana.Unity.Rpc.Models.AccountMeta> keys = new()
@@ -263,22 +376,6 @@ namespace Blobs
                 byte[] _data = new byte[1200];
                 int offset = 0;
                 _data.WriteU64(2027946759707441272UL, offset);
-                offset += 8;
-                offset += _data.WriteBorshString(levelSeed, offset);
-                _data.WriteU16(counter, offset);
-                offset += 2;
-                byte[] resultData = new byte[offset];
-                Array.Copy(_data, resultData, offset);
-                return new Solana.Unity.Rpc.Models.TransactionInstruction{Keys = keys, ProgramId = programId.KeyBytes, Data = resultData};
-            }
-
-            public static Solana.Unity.Rpc.Models.TransactionInstruction SuperChopTree(SuperChopTreeAccounts accounts, string levelSeed, ushort counter, PublicKey programId)
-            {
-                List<Solana.Unity.Rpc.Models.AccountMeta> keys = new()
-                {Solana.Unity.Rpc.Models.AccountMeta.ReadOnly(accounts.SessionToken == null ? programId : accounts.SessionToken, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.Player, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.GameData, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.Signer, true), Solana.Unity.Rpc.Models.AccountMeta.ReadOnly(accounts.SystemProgram, false)};
-                byte[] _data = new byte[1200];
-                int offset = 0;
-                _data.WriteU64(1750819471606152907UL, offset);
                 offset += 8;
                 offset += _data.WriteBorshString(levelSeed, offset);
                 _data.WriteU16(counter, offset);

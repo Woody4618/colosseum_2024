@@ -1,6 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Blobs } from "../target/types/blobs";
+import { BN } from "bn.js";
 
 describe("blobs", () => {
 
@@ -10,7 +11,7 @@ describe("blobs", () => {
   const payer = provider.wallet as anchor.Wallet
   const gameDataSeed = "gameData";
 
-  it("Init player and chop tree!", async () => {
+  it("Init player and spawn a blob!", async () => {
 
     console.log("Local address", payer.publicKey.toBase58());
 
@@ -58,7 +59,7 @@ describe("blobs", () => {
       console.log("Player already exists: ", e);
     }
     
-    for (let i = 0; i < 11; i++) {
+    for (let i = 0; i < 1; i++) {
       console.log(`Chop instruction ${i}`);
 
       let tx = await program.methods
@@ -82,5 +83,59 @@ describe("blobs", () => {
     );
     const decoded = program.coder.accounts.decode("PlayerData", accountInfo.data);
     console.log("Player account info", JSON.stringify(decoded));
+  });
+
+  it("Spawn a blob!", async () => {
+
+    for (let i = 0; i < 4; i++) {
+      console.log(`Spawn blob instruction ${i}`);
+
+      const [blobPDA] = anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          Buffer.from(gameDataSeed), new BN(i).toBuffer(), new BN(i).toBuffer()   
+        ],
+        program.programId
+      );
+  
+      console.log("Blob PDA", blobPDA.toBase58());
+      
+      const [gameDataPDA] = anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          Buffer.from(gameDataSeed)       
+        ],
+        program.programId
+      );
+
+      let tx = await program.methods
+      .spawnBlobs(gameDataSeed, i, i)
+      .accounts(
+        {
+          sessionToken: null,
+          blob: blobPDA,
+          gameData: gameDataPDA,
+          systemProgram: anchor.web3.SystemProgram.programId,
+          signer: payer.publicKey
+        }    
+      )
+      .rpc();
+
+      console.log("Spawn Blob instruction", tx);
+      await anchor.getProvider().connection.confirmTransaction(tx, "confirmed");
+
+      const accountInfo = await anchor.getProvider().connection.getAccountInfo(
+        blobPDA, "confirmed"
+      );
+
+      const decoded = program.coder.accounts.decode("BlobData", accountInfo.data);
+      console.log("Player account info", JSON.stringify(decoded));
+
+
+      const accountInfoGameData = await anchor.getProvider().connection.getAccountInfo(
+        gameDataPDA, "confirmed"
+      );
+
+      const decodedGameData = program.coder.accounts.decode("GameData", accountInfoGameData.data);
+      console.log("Game Data info", JSON.stringify(decodedGameData));
+    }
   });
 });

@@ -1,49 +1,83 @@
 pub use crate::errors::GameErrorCode;
+use crate::state::blob_data::BlobData;
 pub use crate::state::game_data::GameData;
-use crate::state::player_data::PlayerData;
 use anchor_lang::prelude::*;
 use session_keys::{Session, SessionToken};
 
-pub fn spawn_blob(mut ctx: Context<ChopTree>, counter: u16, amount: u64) -> Result<()> {
-    let account: &mut &mut ChopTree<'_> = &mut ctx.accounts;
-    account.player.update_energy()?;
-    account.player.print()?;
+pub fn spawn_blob(mut ctx: Context<SpawnBlob>, x: u8, y: u8) -> Result<()> {
+    let accounts: &mut &mut SpawnBlob<'_> = &mut ctx.accounts;
 
-    if account.player.energy < amount {
-        return err!(GameErrorCode::NotEnoughEnergy);
-    }
+    // TODO: save new blobs (stream?)
+    //account
+    //    .game_data
+    //    .on_new_blob_spanwed(ctx.accounts.blob)?;
 
-    account.player.last_id = counter;
-    account.player.chop_tree(amount)?;
-    account.game_data.on_tree_chopped(amount)?;
+    accounts
+        .game_data
+        .on_new_blob_spanwed_pubkey(accounts.blob.key())?;
+
+    /*accounts
+    .game_data
+    .on_new_blob_spanwed(BlobData{
+        x: accounts.blob.x,
+        y: accounts.blob.y,
+        level: accounts.blob.level,
+        last_login: accounts.blob.last_login,
+
+        accounts.blob.last_login,
+        accounts.blob.authority,
+        accounts.blob.color,
+        accounts.blob.color_max
+    })?;*/
+
+    // Probably check if there is a blob already at this location
+    // If the player doesnt have a blob yet make it home planet
+
+    //account.blob.last_id = counter; // probably not needed
+    accounts.blob.x = x;
+    accounts.blob.y = y;
+    accounts.blob.level = 1;
+    accounts.blob.last_login = Clock::get()?.unix_timestamp;
+    accounts.blob.authority = accounts.signer.key();
+    accounts.blob.color = 0;
+    accounts.blob.color_max = 100;
+
+    accounts.blob.update()?;
+    accounts.blob.print()?;
+
+    // account.blob.chop_tree(amount)?;
 
     msg!(
-        "You chopped a tree and got 1 wood. You have {} wood and {} energy left.",
-        ctx.accounts.player.wood,
-        ctx.accounts.player.energy
+        "New blob spawned at {}/{} with color {}/{}.",
+        ctx.accounts.blob.x,
+        ctx.accounts.blob.y,
+        ctx.accounts.blob.color,
+        ctx.accounts.blob.color_max
     );
     Ok(())
 }
 
 #[derive(Accounts, Session)]
-#[instruction(level_seed: String)]
+#[instruction(level_seed: String, x: u8, y: u8)]
 pub struct SpawnBlob<'info> {
     #[session(
         // The ephemeral key pair signing the transaction
         signer = signer,
         // The authority of the user account which must have created the session
-        authority = player.authority.key()
+        authority = blob.authority.key()
     )]
     // Session Tokens are passed as optional accounts
     pub session_token: Option<Account<'info, SessionToken>>,
 
     // There is one PlayerData account
     #[account(
-        mut,
-        seeds = [b"player".as_ref(), player.authority.key().as_ref()],
+        init,
+        seeds = [level_seed.as_ref(), x.to_le_bytes().as_ref(), y.to_le_bytes().as_ref()],
         bump,
+        space = 1000,
+        payer = signer,
     )]
-    pub player: Account<'info, PlayerData>,
+    pub blob: Account<'info, BlobData>,
 
     // There can be multiple levels the seed for the level is passed in the instruction
     // First player starting a new level will pay for the account in the current setup
