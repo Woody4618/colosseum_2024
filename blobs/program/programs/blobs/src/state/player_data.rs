@@ -11,6 +11,7 @@ pub struct PlayerData {
     pub energy: u64,
     pub last_login: i64,
     pub last_id: u16,
+    pub blobs_spawned: u16,
 }
 
 impl PlayerData {

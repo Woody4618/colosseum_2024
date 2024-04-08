@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Cysharp.Threading.Tasks;
@@ -10,6 +10,7 @@ using Game.Scripts.Ui;
 using Blobs;
 using Blobs.Accounts;
 using Blobs.Program;
+using Game.Scripts.Utils;
 using Solana.Unity.Programs;
 using Solana.Unity.Programs.Models;
 using Solana.Unity.Rpc.Core.Http;
@@ -20,6 +21,7 @@ using Solana.Unity.SDK;
 using Solana.Unity.SessionKeys.GplSession.Accounts;
 using Solana.Unity.Wallet;
 using Services;
+using Solana.Unity.Rpc.Core.Sockets;
 using UnityEngine;
 using Debug = UnityEngine.Debug;
 
@@ -28,12 +30,13 @@ public class AnchorService : MonoBehaviour
     public PublicKey AnchorProgramIdPubKey = new("9aMxRDFLQwW2e185TdpfHJWAWTGhzLQwB7SuEf58WYDX");
 
     // Needs to be the same constants as in the anchor program
-    public const int TIME_TO_REFILL_ENERGY = 60;
+    public const int TIME_TO_REFILL_ONE_COLOR = 3;
     public const int MAX_ENERGY = 100;
     public const int MAX_WOOD_PER_TREE = 100000;
 
     public static AnchorService Instance { get; private set; }
     public static Action<PlayerData> OnPlayerDataChanged;
+    public static Action<BlobData> OnBlobDataChanged;
     public static Action<GameData> OnGameDataChanged;
     public static Action OnInitialDataLoaded;
 
@@ -56,8 +59,14 @@ public class AnchorService : MonoBehaviour
     private int nonBlockingTransactionsInProgress;
     private long? sessionValidUntil;
     private string sessionKeyPassword = "inGame"; // Would be better to generate and save in playerprefs
-    private string levelSeed = "level_2";
+    private string gameDataSeed = "gameData";
     private ushort transactionCounter = 0;
+
+    // This is to not subscribe to blob updates multiple times
+    private List<PublicKey> KnownBlobs = new List<PublicKey>();
+
+    // These are all the blobs that are currently spanwed on the map
+    public List<BlobData> activeBlobs = new List<BlobData>();
 
     // Only used to show transaction speed. Feel free to remove
     private Dictionary<ushort, Stopwatch> stopWatches = new ();
@@ -108,7 +117,7 @@ public class AnchorService : MonoBehaviour
             AnchorProgramIdPubKey, out PlayerDataPDA, out byte bump);
 
         PublicKey.TryFindProgramAddress(new[]
-                {Encoding.UTF8.GetBytes(levelSeed)},
+                {Encoding.UTF8.GetBytes(gameDataSeed)},
             AnchorProgramIdPubKey, out GameDataPDA, out byte bump2);
     }
 
@@ -193,12 +202,48 @@ public class AnchorService : MonoBehaviour
 
         if (gameData != null)
         {
-          //Debug.Log("There are " + gameData.ParsedResult.ActiveBlobs.Length + " blobs");
-          await anchorClient.SubscribeGameDataAsync(GameDataPDA, (state, value, gameData) =>
-            {
+          Debug.Log("There are " + gameData.ParsedResult.ActiveBlobs.Length + " blobs");
+
+          activeBlobs.Clear();
+
+          foreach (var blob in gameData.ParsedResult.ActiveBlobs)
+          {
+            var blobData = await anchorClient.GetBlobDataAsync(blob, Commitment.Processed);
+            activeBlobs.Add(blobData.ParsedResult);
+            OnBlobDataChanged?.Invoke(blobData.ParsedResult);
+            Debug.Log($"Blob position: {blobData.ParsedResult.X} / {blobData.ParsedResult.Y}");
+          }
+
+          await SubscribeToBlobs(gameData.ParsedResult);
+
+          await anchorClient.SubscribeGameDataAsync(GameDataPDA, async (state, value, gameData) =>
+          {
+                await UniTask.SwitchToMainThread();
                 OnRecievedGameDataUpdate(gameData);
+                await SubscribeToBlobs(gameData);
             }, Commitment.Processed);
         }
+    }
+
+    private async Task SubscribeToBlobs(GameData gameData)
+    {
+      foreach (var blobPubkey in gameData.ActiveBlobs)
+      {
+        if (!KnownBlobs.Contains(blobPubkey))
+        {
+          var blobData = await anchorClient.GetBlobDataAsync(blobPubkey, Commitment.Processed);
+          activeBlobs.Add(blobData.ParsedResult);
+          OnBlobDataChanged?.Invoke(blobData.ParsedResult);
+          await anchorClient.SubscribeBlobDataAsync(blobPubkey, OnNewBlobData, Commitment.Processed);
+          KnownBlobs.Add(blobPubkey);
+        }
+      }
+    }
+
+    private async void OnNewBlobData(SubscriptionState state, ResponseValue<AccountInfo> accountInfo, BlobData blobData)
+    {
+      await UniTask.SwitchToMainThread();
+      OnBlobDataChanged(blobData);
     }
 
     private void OnRecievedGameDataUpdate(GameData gameData)
@@ -223,7 +268,7 @@ public class AnchorService : MonoBehaviour
         accounts.Signer = Web3.Account;
         accounts.SystemProgram = SystemProgram.ProgramIdKey;
 
-        var initTx = BlobsProgram.InitPlayer(accounts, levelSeed, AnchorProgramIdPubKey);
+        var initTx = BlobsProgram.InitPlayer(accounts, gameDataSeed, AnchorProgramIdPubKey);
         tx.Add(initTx);
 
         if (useSession)
@@ -324,7 +369,7 @@ public class AnchorService : MonoBehaviour
         {
             FeePayer = Web3.Account,
             Instructions = new List<TransactionInstruction>(),
-            RecentBlockHash = await Web3.BlockHash(maxSeconds: 15)
+            RecentBlockHash = await Web3.BlockHash(maxSeconds: 5)
         };
 
         ChopTreeAccounts chopTreeAccounts = new ChopTreeAccounts
@@ -339,7 +384,7 @@ public class AnchorService : MonoBehaviour
             transaction.FeePayer = sessionWallet.Account.PublicKey;
             chopTreeAccounts.Signer = sessionWallet.Account.PublicKey;
             chopTreeAccounts.SessionToken = sessionWallet.SessionTokenPDA;
-            var chopInstruction = BlobsProgram.ChopTree(chopTreeAccounts, levelSeed, transactionCounter, AnchorProgramIdPubKey);
+            var chopInstruction = BlobsProgram.ChopTree(chopTreeAccounts, gameDataSeed, transactionCounter, AnchorProgramIdPubKey);
             transaction.Add(chopInstruction);
             Debug.Log("Sign and send chop tree with session");
             await SendAndConfirmTransaction(sessionWallet, transaction, "Chop Tree with session.", isBlocking: false, onSucccess: onSuccess);
@@ -348,7 +393,7 @@ public class AnchorService : MonoBehaviour
         {
             transaction.FeePayer = Web3.Account.PublicKey;
             chopTreeAccounts.Signer = Web3.Account.PublicKey;
-            var chopInstruction = BlobsProgram.ChopTree(chopTreeAccounts, levelSeed, transactionCounter, AnchorProgramIdPubKey);
+            var chopInstruction = BlobsProgram.ChopTree(chopTreeAccounts, gameDataSeed, transactionCounter, AnchorProgramIdPubKey);
             transaction.Add(chopInstruction);
             Debug.Log("Sign and send init without session");
             await SendAndConfirmTransaction(Web3.Wallet, transaction, "Chop Tree without session.", onSucccess: onSuccess);
@@ -438,4 +483,269 @@ public class AnchorService : MonoBehaviour
         var sessionValid = await UpdateSessionValid();
         Debug.Log("After create session, the session is valid: " + sessionValid);
     }
+
+    public static byte[] UlongToLittleEndianBytes(ulong value)
+    {
+      byte[] bytes = BitConverter.GetBytes(value);
+
+      // BitConverter.GetBytes returns bytes in little-endian on little-endian systems.
+      // If the system is big-endian, reverse the array to make it little-endian.
+      if (!BitConverter.IsLittleEndian)
+      {
+        Array.Reverse(bytes);
+      }
+
+      return bytes;
+    }
+
+    public async void SpawnBlob(bool useSession, ulong tileViewX, ulong tileViewY, Action onSuccess)
+    {
+        if (!Instance.IsSessionValid() && useSession)
+        {
+            await Instance.UpdateSessionValid();
+            ServiceFactory.Resolve<UiService>().OpenPopup(UiService.ScreenType.SessionPopup, new SessionPopupUiData());
+            return;
+        }
+
+        var transaction = new Transaction()
+        {
+            FeePayer = Web3.Account,
+            Instructions = new List<TransactionInstruction>(),
+            RecentBlockHash = await Web3.BlockHash(maxSeconds: 5)
+        };
+
+        PublicKey newBlobPDA = null;
+        PublicKey.TryFindProgramAddress(new[]
+            {
+              Encoding.UTF8.GetBytes(gameDataSeed),
+              new byte[] { (byte)tileViewX },
+              new byte[] {  (byte) tileViewY }
+            },
+          AnchorProgramIdPubKey,
+          out newBlobPDA, out byte bump);
+
+          Debug.Log($"x: {tileViewX} and y: {tileViewX}" );
+          Debug.Log($"x: {(byte) tileViewX} and y: { (byte) tileViewX}" );
+          Debug.Log($"x: {UlongToLittleEndianBytes(tileViewX)} and y: {  UlongToLittleEndianBytes(tileViewY)}" );
+
+        SpawnBlobsAccounts spawnBlobsAccounts = new SpawnBlobsAccounts
+        {
+            Blob = newBlobPDA,
+            GameData = GameDataPDA,
+            Player = PlayerDataPDA,
+            SystemProgram = SystemProgram.ProgramIdKey
+        };
+
+        ulong pickerPlayerColor = ColorUtils.RGBToUlong(0, 255, 0, 255);
+
+        if (useSession)
+        {
+            transaction.FeePayer = sessionWallet.Account.PublicKey;
+            spawnBlobsAccounts.Signer = sessionWallet.Account.PublicKey;
+            spawnBlobsAccounts.SessionToken = sessionWallet.SessionTokenPDA;
+            // TODO: bad conversion from u64 to u8
+            var chopInstruction = BlobsProgram.SpawnBlobs(spawnBlobsAccounts, gameDataSeed, (byte) tileViewX, (byte) tileViewY, pickerPlayerColor,  AnchorProgramIdPubKey);
+            transaction.Add(chopInstruction);
+            Debug.Log("Sign and send chop tree with session");
+            await SendAndConfirmTransaction(sessionWallet, transaction, "Chop Tree with session.", isBlocking: false, onSucccess: onSuccess);
+        }
+        else
+        {
+            transaction.FeePayer = Web3.Account.PublicKey;
+            spawnBlobsAccounts.Signer = Web3.Account.PublicKey;
+            // TODO: bad conversion from u64 to u8
+            var chopInstruction = BlobsProgram.SpawnBlobs(spawnBlobsAccounts, gameDataSeed, (byte) tileViewX, (byte) tileViewY, pickerPlayerColor,  AnchorProgramIdPubKey);
+            transaction.Add(chopInstruction);
+            Debug.Log("Sign and send init without session");
+            await SendAndConfirmTransaction(Web3.Wallet, transaction, "Chop Tree without session.", onSucccess: onSuccess);
+        }
+
+        if (CurrentGameData == null)
+        {
+            await SubscribeToGameDataUpdates();
+        }
+    }
+
+    public async void AttackBlob(bool useSession, BlobView selectedBlobView, BlobView clickedBlobView, Action onSuccess = null)
+    {
+        if (!Instance.IsSessionValid() && useSession)
+        {
+            await Instance.UpdateSessionValid();
+            ServiceFactory.Resolve<UiService>().OpenPopup(UiService.ScreenType.SessionPopup, new SessionPopupUiData());
+            return;
+        }
+
+        var transaction = new Transaction()
+        {
+            FeePayer = Web3.Account,
+            Instructions = new List<TransactionInstruction>(),
+            RecentBlockHash = await Web3.BlockHash(maxSeconds: 5)
+        };
+
+        PublicKey attackingBlob = null;
+        PublicKey.TryFindProgramAddress(new[]
+          {
+            Encoding.UTF8.GetBytes(gameDataSeed),
+            new byte[] { (byte) selectedBlobView.CurrentBlobData.X },
+            new byte[] { (byte) selectedBlobView.CurrentBlobData.Y }
+          },
+          AnchorProgramIdPubKey,
+          out attackingBlob, out byte bump);
+
+        PublicKey defendingBlob = null;
+        PublicKey.TryFindProgramAddress(new[]
+          {
+            Encoding.UTF8.GetBytes(gameDataSeed),
+            new byte[] { (byte) clickedBlobView.CurrentBlobData.X },
+            new byte[] { (byte) clickedBlobView.CurrentBlobData.Y },
+          },
+          AnchorProgramIdPubKey,
+          out defendingBlob, out byte bump2);
+
+        AttackBlobAccounts spawnBlobsAccounts = new AttackBlobAccounts
+        {
+            AttackingBlob = attackingBlob,
+            DefendingBlob = defendingBlob,
+            Player = PlayerDataPDA,
+            GameData = GameDataPDA,
+        };
+
+        if (useSession)
+        {
+            transaction.FeePayer = sessionWallet.Account.PublicKey;
+            spawnBlobsAccounts.Signer = sessionWallet.Account.PublicKey;
+            spawnBlobsAccounts.SessionToken = sessionWallet.SessionTokenPDA;
+            // TODO: bad conversion from u64 to u8
+            var attackInstruction = BlobsProgram.AttackBlob(spawnBlobsAccounts,
+              gameDataSeed, (byte)
+              selectedBlobView.CurrentBlobData.X,
+              (byte) selectedBlobView.CurrentBlobData.Y,
+              clickedBlobView.CurrentBlobData.X,
+            clickedBlobView.CurrentBlobData.Y,
+              AnchorProgramIdPubKey);
+            transaction.Add(attackInstruction);
+            Debug.Log("Sign and send chop tree with session");
+            await SendAndConfirmTransaction(sessionWallet, transaction, "Attack blob session.", isBlocking: false, onSucccess: onSuccess);
+        }
+        else
+        {
+            transaction.FeePayer = Web3.Account.PublicKey;
+            spawnBlobsAccounts.Signer = Web3.Account.PublicKey;
+            // TODO: bad conversion from u64 to u8
+            var attackInstruction = BlobsProgram.AttackBlob(spawnBlobsAccounts,
+              gameDataSeed, (byte)
+              selectedBlobView.CurrentBlobData.X,
+              (byte) selectedBlobView.CurrentBlobData.Y,
+              clickedBlobView.CurrentBlobData.X,
+              clickedBlobView.CurrentBlobData.Y,
+              AnchorProgramIdPubKey);
+            transaction.Add(attackInstruction);
+            Debug.Log("Sign and send init without session");
+            await SendAndConfirmTransaction(Web3.Wallet, transaction, "Attack blob no session.", onSucccess: onSuccess);
+        }
+
+        if (CurrentGameData == null)
+        {
+            await SubscribeToGameDataUpdates();
+        }
+    }
+
+    public async void SendAttackFinish(bool useSession, byte attacker_x, byte attacker_y, byte defender_x, byte defender_y, Action onSuccess, Action<String> onError)
+    {
+        if (!Instance.IsSessionValid() && useSession)
+        {
+            await Instance.UpdateSessionValid();
+            ServiceFactory.Resolve<UiService>().OpenPopup(UiService.ScreenType.SessionPopup, new SessionPopupUiData());
+            return;
+        }
+
+        var transaction = new Transaction()
+        {
+            FeePayer = Web3.Account,
+            Instructions = new List<TransactionInstruction>(),
+            RecentBlockHash = await Web3.BlockHash(maxSeconds: 5)
+        };
+
+        PublicKey attackingBlob = null;
+        PublicKey.TryFindProgramAddress(new[]
+          {
+            Encoding.UTF8.GetBytes(gameDataSeed),
+            new byte[] { (byte) attacker_x },
+            new byte[] { (byte) attacker_y }
+          },
+          AnchorProgramIdPubKey,
+          out attackingBlob, out byte bump);
+
+        PublicKey defendingBlob = null;
+        PublicKey.TryFindProgramAddress(new[]
+          {
+            Encoding.UTF8.GetBytes(gameDataSeed),
+            new byte[] { (byte) defender_x },
+            new byte[] { (byte) defender_y },
+          },
+          AnchorProgramIdPubKey,
+          out defendingBlob, out byte bump2);
+
+        FinishAttackBlobAccounts spawnBlobsAccounts = new FinishAttackBlobAccounts
+        {
+            Player = PlayerDataPDA,
+            AttackingBlob = attackingBlob,
+            DefendingBlob = defendingBlob,
+            GameData = GameDataPDA,
+        };
+
+        if (useSession)
+        {
+            transaction.FeePayer = sessionWallet.Account.PublicKey;
+            spawnBlobsAccounts.Signer = sessionWallet.Account.PublicKey;
+            spawnBlobsAccounts.SessionToken = sessionWallet.SessionTokenPDA;
+            // TODO: bad conversion from u64 to u8
+            var attackInstruction = BlobsProgram.FinishAttackBlob(spawnBlobsAccounts,
+              gameDataSeed, (byte)
+              attacker_x,
+              attacker_y,
+              defender_x,
+            defender_y,
+              AnchorProgramIdPubKey);
+            transaction.Add(attackInstruction);
+            Debug.Log("Sign and send chop tree with session");
+            await SendAndConfirmTransaction(sessionWallet, transaction, "Finish attach blob session.", isBlocking: false, onSucccess: onSuccess, onError: onError);
+        }
+        else
+        {
+            transaction.FeePayer = Web3.Account.PublicKey;
+            spawnBlobsAccounts.Signer = Web3.Account.PublicKey;
+            // TODO: bad conversion from u64 to u8
+            var attackInstruction = BlobsProgram.FinishAttackBlob(spawnBlobsAccounts,
+              gameDataSeed, (byte)
+              attacker_x,
+              attacker_y,
+              defender_x,
+              defender_y,
+              AnchorProgramIdPubKey);
+            transaction.Add(attackInstruction);
+            Debug.Log("Sign and send init without session");
+            await SendAndConfirmTransaction(Web3.Wallet, transaction, "Finish Attack blob no session.", onSucccess: onSuccess, onError: onError);
+        }
+
+        if (CurrentGameData == null)
+        {
+            await SubscribeToGameDataUpdates();
+        }
+    }
+
+    public PublicKey GetBlobPubkey(BlobData blobData)
+    {
+      PublicKey defendingBlob = null;
+      PublicKey.TryFindProgramAddress(new[]
+        {
+          Encoding.UTF8.GetBytes(gameDataSeed),
+          new byte[] { (byte) blobData.X },
+          new byte[] { (byte) blobData.Y },
+        },
+        AnchorProgramIdPubKey,
+        out defendingBlob, out byte bump2);
+      return defendingBlob;
+    }
+
 }

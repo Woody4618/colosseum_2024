@@ -52,6 +52,9 @@ TODO Game preset:
 - Add use session to player data init
 - Add check for session to session popup
 - Rename test ts file to how the project is called or smth default 
+- Switch to main thread on game data message 
+- Check if seeds in unity client and program are the same 
+- Rename gameData from level seed so that they are the same in unity and the program
 
 TODO Client: 
 - Add Spawn blobs call to unity 
@@ -61,5 +64,8 @@ TODO Client:
 TODO Program: 
 - Random blobs position 
 - Blob position check (increase blob level on duplicate)
+- Attack async 
+- Attack test 
+- Attach finish battle 
 
 

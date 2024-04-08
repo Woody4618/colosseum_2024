@@ -8,4 +8,12 @@ pub enum GameErrorCode {
     WrongAuthority,
     #[msg("Already attacking")]
     AlreadyAttacking,
+    #[msg("Not attacking")]
+    NotAttacking,
+    #[msg("Not finished")]
+    NotFinished,
+    #[msg("TooManyBlobs")]
+    TooManyBlobs,
+    #[msg("NotAuthorized")]
+    NotAuthorized,
 }

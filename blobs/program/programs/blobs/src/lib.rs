@@ -18,8 +18,36 @@ pub mod blobs {
         init_player::init_player(ctx)
     }
 
-    pub fn spawn_blobs(ctx: Context<SpawnBlob>, _level_seed: String, x: u8, y: u8) -> Result<()> {
-        spawn_blob::spawn_blob(ctx, x, y)
+    pub fn spawn_blobs(
+        ctx: Context<SpawnBlob>,
+        _level_seed: String,
+        x: u8,
+        y: u8,
+        player_color: u64,
+    ) -> Result<()> {
+        spawn_blob::spawn_blob(ctx, x, y, player_color)
+    }
+
+    pub fn attack_blob(
+        ctx: Context<AttackBlob>,
+        _level_seed: String,
+        _attacking_blob_x: u8,
+        _attacking_blob_y: u8,
+        _defending_blob_x: u8,
+        _defending_blob_y: u8,
+    ) -> Result<()> {
+        attack_blob::start_attack_blob(ctx)
+    }
+
+    pub fn finish_attack_blob(
+        ctx: Context<AttackBlob>,
+        _level_seed: String,
+        _attacking_blob_x: u8,
+        _attacking_blob_y: u8,
+        _defending_blob_x: u8,
+        _defending_blob_y: u8,
+    ) -> Result<()> {
+        attack_blob::finish_attack_blob(ctx)
     }
 
     // This function lets the player chop a tree and get 1 wood. The session_auth_or macro

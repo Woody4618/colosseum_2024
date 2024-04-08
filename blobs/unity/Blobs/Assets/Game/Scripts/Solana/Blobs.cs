@@ -34,13 +34,25 @@ namespace Blobs
 
             public byte Level { get; set; }
 
-            public ulong Color { get; set; }
+            public ulong ColorValue { get; set; }
+
+            public ulong ColorCurrent { get; set; }
 
             public ulong ColorMax { get; set; }
 
             public long LastLogin { get; set; }
 
             public ushort LastId { get; set; }
+
+            public long AttackStartTime { get; set; }
+
+            public ulong AttackDuration { get; set; }
+
+            public ulong AttackPower { get; set; }
+
+            public PublicKey AttackTarget { get; set; }
+
+            public PublicKey[] Attackers { get; set; }
 
             public static BlobData Deserialize(ReadOnlySpan<byte> _data)
             {
@@ -53,15 +65,21 @@ namespace Blobs
                 }
 
                 BlobData result = new BlobData();
-                result.Authority = _data.GetPubKey(offset);
-                offset += 32;
+                if (_data.GetBool(offset++))
+                {
+                    result.Authority = _data.GetPubKey(offset);
+                    offset += 32;
+                }
+
                 result.X = _data.GetU8(offset);
                 offset += 1;
                 result.Y = _data.GetU8(offset);
                 offset += 1;
                 result.Level = _data.GetU8(offset);
                 offset += 1;
-                result.Color = _data.GetU64(offset);
+                result.ColorValue = _data.GetU64(offset);
+                offset += 8;
+                result.ColorCurrent = _data.GetU64(offset);
                 offset += 8;
                 result.ColorMax = _data.GetU64(offset);
                 offset += 8;
@@ -69,6 +87,23 @@ namespace Blobs
                 offset += 8;
                 result.LastId = _data.GetU16(offset);
                 offset += 2;
+                result.AttackStartTime = _data.GetS64(offset);
+                offset += 8;
+                result.AttackDuration = _data.GetU64(offset);
+                offset += 8;
+                result.AttackPower = _data.GetU64(offset);
+                offset += 8;
+                result.AttackTarget = _data.GetPubKey(offset);
+                offset += 32;
+                int resultAttackersLength = (int)_data.GetU32(offset);
+                offset += 4;
+                result.Attackers = new PublicKey[resultAttackersLength];
+                for (uint resultAttackersIdx = 0; resultAttackersIdx < resultAttackersLength; resultAttackersIdx++)
+                {
+                    result.Attackers[resultAttackersIdx] = _data.GetPubKey(offset);
+                    offset += 32;
+                }
+
                 return result;
             }
         }
@@ -129,6 +164,8 @@ namespace Blobs
 
             public ushort LastId { get; set; }
 
+            public ushort BlobsSpawned { get; set; }
+
             public static PlayerData Deserialize(ReadOnlySpan<byte> _data)
             {
                 int offset = 0;
@@ -156,6 +193,8 @@ namespace Blobs
                 offset += 8;
                 result.LastId = _data.GetU16(offset);
                 offset += 2;
+                result.BlobsSpawned = _data.GetU16(offset);
+                offset += 2;
                 return result;
             }
         }
@@ -166,7 +205,10 @@ namespace Blobs
         public enum BlobsErrorKind : uint
         {
             NotEnoughEnergy = 6000U,
-            WrongAuthority = 6001U
+            WrongAuthority = 6001U,
+            AlreadyAttacking = 6002U,
+            NotAttacking = 6003U,
+            NotFinished = 6004U
         }
     }
 
@@ -278,9 +320,21 @@ namespace Blobs
             return await SignAndSendTransaction(instr, feePayer, signingCallback);
         }
 
-        public async Task<RequestResult<string>> SendSpawnBlobsAsync(SpawnBlobsAccounts accounts, string levelSeed, byte x, byte y, PublicKey feePayer, Func<byte[], PublicKey, byte[]> signingCallback, PublicKey programId)
+        public async Task<RequestResult<string>> SendSpawnBlobsAsync(SpawnBlobsAccounts accounts, string levelSeed, byte x, byte y, ulong playerColor, PublicKey feePayer, Func<byte[], PublicKey, byte[]> signingCallback, PublicKey programId)
         {
-            Solana.Unity.Rpc.Models.TransactionInstruction instr = Program.BlobsProgram.SpawnBlobs(accounts, levelSeed, x, y, programId);
+            Solana.Unity.Rpc.Models.TransactionInstruction instr = Program.BlobsProgram.SpawnBlobs(accounts, levelSeed, x, y, playerColor, programId);
+            return await SignAndSendTransaction(instr, feePayer, signingCallback);
+        }
+
+        public async Task<RequestResult<string>> SendAttackBlobAsync(AttackBlobAccounts accounts, string levelSeed, byte attackingBlobX, byte attackingBlobY, byte defendingBlobX, byte defendingBlobY, PublicKey feePayer, Func<byte[], PublicKey, byte[]> signingCallback, PublicKey programId)
+        {
+            Solana.Unity.Rpc.Models.TransactionInstruction instr = Program.BlobsProgram.AttackBlob(accounts, levelSeed, attackingBlobX, attackingBlobY, defendingBlobX, defendingBlobY, programId);
+            return await SignAndSendTransaction(instr, feePayer, signingCallback);
+        }
+
+        public async Task<RequestResult<string>> SendFinishAttackBlobAsync(FinishAttackBlobAccounts accounts, string levelSeed, byte attackingBlobX, byte attackingBlobY, byte defendingBlobX, byte defendingBlobY, PublicKey feePayer, Func<byte[], PublicKey, byte[]> signingCallback, PublicKey programId)
+        {
+            Solana.Unity.Rpc.Models.TransactionInstruction instr = Program.BlobsProgram.FinishAttackBlob(accounts, levelSeed, attackingBlobX, attackingBlobY, defendingBlobX, defendingBlobY, programId);
             return await SignAndSendTransaction(instr, feePayer, signingCallback);
         }
 
@@ -292,7 +346,7 @@ namespace Blobs
 
         protected override Dictionary<uint, ProgramError<BlobsErrorKind>> BuildErrorsDictionary()
         {
-            return new Dictionary<uint, ProgramError<BlobsErrorKind>>{{6000U, new ProgramError<BlobsErrorKind>(BlobsErrorKind.NotEnoughEnergy, "Not enough energy")}, {6001U, new ProgramError<BlobsErrorKind>(BlobsErrorKind.WrongAuthority, "Wrong Authority")}, };
+            return new Dictionary<uint, ProgramError<BlobsErrorKind>>{{6000U, new ProgramError<BlobsErrorKind>(BlobsErrorKind.NotEnoughEnergy, "Not enough energy")}, {6001U, new ProgramError<BlobsErrorKind>(BlobsErrorKind.WrongAuthority, "Wrong Authority")}, {6002U, new ProgramError<BlobsErrorKind>(BlobsErrorKind.AlreadyAttacking, "Already attacking")}, {6003U, new ProgramError<BlobsErrorKind>(BlobsErrorKind.NotAttacking, "Not attacking")}, {6004U, new ProgramError<BlobsErrorKind>(BlobsErrorKind.NotFinished, "Not finished")}, };
         }
     }
 
@@ -317,9 +371,41 @@ namespace Blobs
 
             public PublicKey GameData { get; set; }
 
+            public PublicKey Player { get; set; }
+
             public PublicKey Signer { get; set; }
 
             public PublicKey SystemProgram { get; set; }
+        }
+
+        public class AttackBlobAccounts
+        {
+            public PublicKey SessionToken { get; set; }
+
+            public PublicKey AttackingBlob { get; set; }
+
+            public PublicKey DefendingBlob { get; set; }
+
+            public PublicKey Player { get; set; }
+
+            public PublicKey GameData { get; set; }
+
+            public PublicKey Signer { get; set; }
+        }
+
+        public class FinishAttackBlobAccounts
+        {
+            public PublicKey SessionToken { get; set; }
+
+            public PublicKey AttackingBlob { get; set; }
+
+            public PublicKey DefendingBlob { get; set; }
+
+            public PublicKey Player { get; set; }
+
+            public PublicKey GameData { get; set; }
+
+            public PublicKey Signer { get; set; }
         }
 
         public class ChopTreeAccounts
@@ -351,10 +437,10 @@ namespace Blobs
                 return new Solana.Unity.Rpc.Models.TransactionInstruction{Keys = keys, ProgramId = programId.KeyBytes, Data = resultData};
             }
 
-            public static Solana.Unity.Rpc.Models.TransactionInstruction SpawnBlobs(SpawnBlobsAccounts accounts, string levelSeed, byte x, byte y, PublicKey programId)
+            public static Solana.Unity.Rpc.Models.TransactionInstruction SpawnBlobs(SpawnBlobsAccounts accounts, string levelSeed, byte x, byte y, ulong playerColor, PublicKey programId)
             {
                 List<Solana.Unity.Rpc.Models.AccountMeta> keys = new()
-                {Solana.Unity.Rpc.Models.AccountMeta.ReadOnly(accounts.SessionToken == null ? programId : accounts.SessionToken, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.Blob, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.GameData, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.Signer, true), Solana.Unity.Rpc.Models.AccountMeta.ReadOnly(accounts.SystemProgram, false)};
+                {Solana.Unity.Rpc.Models.AccountMeta.ReadOnly(accounts.SessionToken == null ? programId : accounts.SessionToken, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.Blob, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.GameData, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.Player, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.Signer, true), Solana.Unity.Rpc.Models.AccountMeta.ReadOnly(accounts.SystemProgram, false)};
                 byte[] _data = new byte[1200];
                 int offset = 0;
                 _data.WriteU64(18180153710071007331UL, offset);
@@ -363,6 +449,52 @@ namespace Blobs
                 _data.WriteU8(x, offset);
                 offset += 1;
                 _data.WriteU8(y, offset);
+                offset += 1;
+                _data.WriteU64(playerColor, offset);
+                offset += 8;
+                byte[] resultData = new byte[offset];
+                Array.Copy(_data, resultData, offset);
+                return new Solana.Unity.Rpc.Models.TransactionInstruction{Keys = keys, ProgramId = programId.KeyBytes, Data = resultData};
+            }
+
+            public static Solana.Unity.Rpc.Models.TransactionInstruction AttackBlob(AttackBlobAccounts accounts, string levelSeed, byte attackingBlobX, byte attackingBlobY, byte defendingBlobX, byte defendingBlobY, PublicKey programId)
+            {
+                List<Solana.Unity.Rpc.Models.AccountMeta> keys = new()
+                {Solana.Unity.Rpc.Models.AccountMeta.ReadOnly(accounts.SessionToken == null ? programId : accounts.SessionToken, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.AttackingBlob, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.DefendingBlob, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.Player, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.GameData, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.Signer, true)};
+                byte[] _data = new byte[1200];
+                int offset = 0;
+                _data.WriteU64(2699594283024781515UL, offset);
+                offset += 8;
+                offset += _data.WriteBorshString(levelSeed, offset);
+                _data.WriteU8(attackingBlobX, offset);
+                offset += 1;
+                _data.WriteU8(attackingBlobY, offset);
+                offset += 1;
+                _data.WriteU8(defendingBlobX, offset);
+                offset += 1;
+                _data.WriteU8(defendingBlobY, offset);
+                offset += 1;
+                byte[] resultData = new byte[offset];
+                Array.Copy(_data, resultData, offset);
+                return new Solana.Unity.Rpc.Models.TransactionInstruction{Keys = keys, ProgramId = programId.KeyBytes, Data = resultData};
+            }
+
+            public static Solana.Unity.Rpc.Models.TransactionInstruction FinishAttackBlob(FinishAttackBlobAccounts accounts, string levelSeed, byte attackingBlobX, byte attackingBlobY, byte defendingBlobX, byte defendingBlobY, PublicKey programId)
+            {
+                List<Solana.Unity.Rpc.Models.AccountMeta> keys = new()
+                {Solana.Unity.Rpc.Models.AccountMeta.ReadOnly(accounts.SessionToken == null ? programId : accounts.SessionToken, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.AttackingBlob, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.DefendingBlob, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.Player, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.GameData, false), Solana.Unity.Rpc.Models.AccountMeta.Writable(accounts.Signer, true)};
+                byte[] _data = new byte[1200];
+                int offset = 0;
+                _data.WriteU64(14676763494536724465UL, offset);
+                offset += 8;
+                offset += _data.WriteBorshString(levelSeed, offset);
+                _data.WriteU8(attackingBlobX, offset);
+                offset += 1;
+                _data.WriteU8(attackingBlobY, offset);
+                offset += 1;
+                _data.WriteU8(defendingBlobX, offset);
+                offset += 1;
+                _data.WriteU8(defendingBlobY, offset);
                 offset += 1;
                 byte[] resultData = new byte[offset];
                 Array.Copy(_data, resultData, offset);
