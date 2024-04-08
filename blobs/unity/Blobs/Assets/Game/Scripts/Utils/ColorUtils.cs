@@ -22,20 +22,12 @@ namespace Game.Scripts.Utils
 
     public static Color UlongToColor(ulong colorValue)
     {
-      // Extract the components. Assuming each component is 16 bits,
-      // and the color is stored in ARGB order.
-      byte a = (byte)((colorValue >> 48) & 0xFFFF); // Extract the alpha component and downscale it
-      byte r = (byte)((colorValue >> 32) & 0xFFFF); // Extract the red component and downscale it
-      byte g = (byte)((colorValue >> 16) & 0xFFFF); // Extract the green component and downscale it
-      byte b = (byte)(colorValue & 0xFFFF);         // Extract the blue component and downscale it
+      byte r = (byte)((colorValue >> 56) & 0xFF); // Shift right by 56 bits then mask the lowest 8 bits
+      byte g = (byte)((colorValue >> 40) & 0xFF); // Shift right by 40 bits then mask the lowest 8 bits
+      byte b = (byte)((colorValue >> 24) & 0xFF); // Shift right by 24 bits then mask the lowest 8 bits
+      byte a = (byte)((colorValue >> 8) & 0xFF);  // Shift right by 8 bits then mask the lowest 8 bits
 
-      // Assuming the color components were in 16-bit and you need to downscale to 8-bit
-      // You can achieve this by taking the high byte of each component directly,
-      // assuming the color information is mostly in the higher bits.
-      // This simple method loses some precision but is a common approach.
-      // If your components are already 8 bits, you can directly use them without bit shifting.
-
-      return new Color(a, r, g, b);
+      return new Color(r / 255f, g / 255f, b / 255f, a / 255f);
     }
   }
 }

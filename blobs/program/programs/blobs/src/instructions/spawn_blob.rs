@@ -33,9 +33,9 @@ pub fn spawn_blob(mut ctx: Context<SpawnBlob>, x: u8, y: u8, color: u64) -> Resu
         accounts.blob.color_value = color;
     } else {
         accounts.blob.authority = None;
-        accounts.blob.color_current = 40;
+        accounts.blob.color_current = 30;
         accounts.blob.color_max = 100;
-        accounts.blob.color_value = 18446603334073679871;
+        accounts.blob.color_value = 9223231297218904063;
     }
 
     accounts.player.blobs_spawned += 1;

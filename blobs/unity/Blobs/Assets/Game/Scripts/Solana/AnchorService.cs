@@ -24,6 +24,7 @@ using Services;
 using Solana.Unity.Rpc.Core.Sockets;
 using UnityEngine;
 using Debug = UnityEngine.Debug;
+using Random = UnityEngine.Random;
 
 public class AnchorService : MonoBehaviour
 {
@@ -536,7 +537,27 @@ public class AnchorService : MonoBehaviour
             SystemProgram = SystemProgram.ProgramIdKey
         };
 
-        ulong pickerPlayerColor = ColorUtils.RGBToUlong(0, 255, 0, 255);
+        int seed = Web3.Account.PublicKey.GetHashCode();
+
+        // Seed the random number generator
+        Random.InitState(seed);
+
+        // Generate random color components
+        float r = Random.Range(0f, 1f);
+        float g = Random.Range(0f, 1f);
+        float b = Random.Range(0f, 1f);
+
+        // Return the new random color
+
+        var randomColorDerivedfromPubkey =  new Color(r, g, b);
+
+        Debug.Log("Random color: "+ randomColorDerivedfromPubkey);
+        ulong pickerPlayerColor = ColorUtils.RGBToUlong((int) (randomColorDerivedfromPubkey.r* 65535), (int) (randomColorDerivedfromPubkey.g* 65535), (int) (randomColorDerivedfromPubkey.b* 65535), 65535);
+        ulong test = ColorUtils.RGBToUlong(65535 / 2, 65535 / 2, 65535 / 2, 65535 / 2);
+        Debug.Log(test);
+       // ulong pickerPlayerColor = ColorUtils.RGBToUlong(100, 0, 0, 255);
+
+        var revert = ColorUtils.UlongToColor(pickerPlayerColor);
 
         if (useSession)
         {
